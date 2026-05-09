@@ -111,6 +111,27 @@ class Store:
             return None
         return PriceRecord(commodity=row[0], price=row[1], ts=row[2], source=row[3])
 
+    async def get_top_n_in_window(
+        self, commodity: Commodity, since_ts: int, n: int
+    ) -> list[PriceRecord]:
+        """Return up to ``n`` rows with the lowest prices in the window.
+
+        Sorted ascending by price; ties broken by recency. Used by
+        ``/fuel best`` to show the top-N lowest snapshots in the last
+        24h, not just the single minimum.
+        """
+        async with self._conn.execute(
+            "SELECT commodity, price, ts, source FROM prices "
+            "WHERE commodity = ? AND ts >= ? "
+            "ORDER BY price ASC, ts DESC LIMIT ?",
+            (commodity, since_ts, n),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [
+            PriceRecord(commodity=r[0], price=r[1], ts=r[2], source=r[3])
+            for r in rows
+        ]
+
     async def get_stats_in_window(
         self, commodity: Commodity, since_ts: int, until_ts: int
     ) -> Stats:

@@ -12,7 +12,7 @@ class FuelCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        self.group = make_commodity_group("fuel", "fuel", "Fuel prices")
+        self.group = make_commodity_group("fuel", "Combined fuel + CO2 prices")
         bot.tree.add_command(self.group)
 
     async def cog_unload(self) -> None:
