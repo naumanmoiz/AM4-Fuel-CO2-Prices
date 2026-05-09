@@ -1,3 +1,5 @@
+"""Console entry point for the ``am4bot`` script."""
+
 from __future__ import annotations
 
 import logging
@@ -7,6 +9,7 @@ from .config import Config
 
 
 def main() -> None:
+    """Load config from the environment and run the bot until stopped."""
     config = Config.from_env()
     logging.basicConfig(
         level=config.log_level,

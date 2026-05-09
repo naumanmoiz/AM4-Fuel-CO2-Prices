@@ -1,0 +1,19 @@
+services:
+  am4bot:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: am4bot:latest
+    container_name: am4bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - am4bot-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  am4bot-data:

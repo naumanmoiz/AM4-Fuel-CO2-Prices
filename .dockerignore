@@ -20,9 +20,6 @@ env/
 .env
 deploy/.env
 
-README.md
-LICENSE
-
 .vscode/
 .idea/
 .DS_Store
