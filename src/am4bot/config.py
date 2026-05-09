@@ -36,6 +36,7 @@ class Config:
     am4help_prices_path: str
     am4help_fuel_field: str
     am4help_co2_field: str
+    mock_data_url: str
     submit_allowed_roles: tuple[int, ...] = field(default_factory=tuple)
     submit_allowed_users: tuple[int, ...] = field(default_factory=tuple)
 
@@ -69,6 +70,11 @@ class Config:
             am4help_prices_path=os.environ.get("AM4HELP_PRICES_PATH", "/prices"),
             am4help_fuel_field=os.environ.get("AM4HELP_FUEL_FIELD", "fuel"),
             am4help_co2_field=os.environ.get("AM4HELP_CO2_FIELD", "co2"),
+            mock_data_url=os.environ.get(
+                "MOCK_DATA_URL",
+                "https://raw.githubusercontent.com/theheuman/am4-helper/"
+                "main/src/assets/resource-prices.json",
+            ),
             submit_allowed_roles=_csv_ints(os.environ.get("SUBMIT_ALLOWED_ROLES", "")),
             submit_allowed_users=_csv_ints(os.environ.get("SUBMIT_ALLOWED_USERS", "")),
         )
