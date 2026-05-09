@@ -1,3 +1,5 @@
+"""Construct the configured ``PriceAdapter`` from a ``Config`` object."""
+
 from __future__ import annotations
 
 from ..config import Config
@@ -7,6 +9,13 @@ from .null import NullAdapter
 
 
 def build_adapter(config: Config) -> PriceAdapter:
+    """Return the adapter selected by ``PRICE_SOURCE``.
+
+    Validates adapter-specific requirements at construction time —
+    ``am4help`` without ``AM4HELP_TOKEN`` raises so the bot fails to
+    start with a clear message rather than silently logging fetch
+    errors forever.
+    """
     src = config.price_source.lower()
     if src == "null":
         return NullAdapter()

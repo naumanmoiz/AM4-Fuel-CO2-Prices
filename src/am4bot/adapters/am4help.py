@@ -1,3 +1,12 @@
+"""Adapter for the AM4Help API (https://api.am4help.com).
+
+The exact prices endpoint isn't published in the public docs, so the
+URL path and the JSON field locations are configurable via env. Once
+the API owner confirms the real path, set ``AM4HELP_PRICES_PATH``,
+``AM4HELP_FUEL_FIELD``, and ``AM4HELP_CO2_FIELD`` accordingly — no
+code changes needed.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -12,10 +21,16 @@ log = logging.getLogger(__name__)
 
 
 def resolve_path(data: Any, path: str) -> Any:
-    """Walk a dotted path through nested dicts/lists.
+    """Walk a dotted JSON path through nested dicts and lists.
 
-    Numeric segments index into lists. Returns None if any segment is missing
-    or the structure doesn't match.
+    Examples:
+        ``resolve_path({"fuel": 480}, "fuel")`` → ``480``
+        ``resolve_path({"data": {"fuel": {"price": 480}}}, "data.fuel.price")`` → ``480``
+        ``resolve_path({"items": [{"v": 1}, {"v": 2}]}, "items.1.v")`` → ``2``
+
+    Numeric segments index into lists (negative indices supported).
+    Returns ``None`` if any segment is missing or the shape doesn't
+    match — callers downstream check ``isinstance(value, (int, float))``.
     """
     cur = data
     for segment in path.split("."):
@@ -32,6 +47,13 @@ def resolve_path(data: Any, path: str) -> Any:
 
 
 class AM4HelpAdapter:
+    """Pulls fuel + CO2 from the AM4Help API.
+
+    Holds a single ``aiohttp.ClientSession`` for the bot's lifetime
+    (created lazily on first ``fetch``) and sends an ``x-access-token``
+    header on every request.
+    """
+
     name = "am4help"
 
     def __init__(
@@ -59,6 +81,13 @@ class AM4HelpAdapter:
         return self._session
 
     async def fetch(self) -> list[PriceRecord]:
+        """GET the prices endpoint and extract fuel + CO2 numeric values.
+
+        Network failures, non-2xx responses, JSON parse errors, and
+        non-numeric resolved values all log a warning and produce an
+        empty (or partial) record list rather than raising. The poller
+        treats a partial response (only fuel, only CO2) as fine.
+        """
         try:
             session = await self._get_session()
             async with session.get(self._url) as resp:

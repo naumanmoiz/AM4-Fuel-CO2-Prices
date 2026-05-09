@@ -1,3 +1,5 @@
+"""``/submit`` (manual price entry) and ``/status`` (last-seen snapshot)."""
+
 from __future__ import annotations
 
 import time
@@ -22,6 +24,20 @@ def _is_allowed(
     allowed_roles: tuple[int, ...],
     allowed_users: tuple[int, ...],
 ) -> bool:
+    """Return True if the interaction's user may run ``/submit``.
+
+    Three tiers, evaluated in order:
+
+    1. If neither allowlist is configured, fall back to "server admin
+       only" — fail-closed default so an unconfigured deployment can't
+       be abused by every guild member.
+    2. User ID match against ``SUBMIT_ALLOWED_USERS``.
+    3. Any role ID intersection with ``SUBMIT_ALLOWED_ROLES``.
+
+    DM context (``interaction.user`` is a ``User``, not a ``Member``)
+    fails the role check naturally and is rejected by the admin
+    fallback too, so DM submissions are blocked.
+    """
     if not allowed_roles and not allowed_users:
         # admin-only fallback when no allowlist configured
         if not isinstance(interaction.user, discord.Member):
@@ -36,6 +52,8 @@ def _is_allowed(
 
 
 class AdminCog(commands.Cog):
+    """Owns the ``/submit`` and ``/status`` slash commands."""
+
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
@@ -50,6 +68,13 @@ class AdminCog(commands.Cog):
         commodity: app_commands.Choice[str],
         price: float,
     ) -> None:
+        """Record a manually-entered price.
+
+        Replies ephemerally on rejection (not allowed, non-positive
+        price, duplicate of latest) so the rest of the channel doesn't
+        see noise. On success replies with the same "current" embed
+        the slash command produces, as confirmation.
+        """
         config: "Config" = self.bot.config  # type: ignore[attr-defined]
         if not _is_allowed(
             interaction,
@@ -88,6 +113,7 @@ class AdminCog(commands.Cog):
         name="status", description="Last seen prices for fuel and CO2"
     )
     async def status(self, interaction: discord.Interaction) -> None:
+        """Show the latest known prices for both commodities at once."""
         store: "Store" = self.bot.store  # type: ignore[attr-defined]
         fuel = await store.get_latest("fuel")
         co2 = await store.get_latest("co2")

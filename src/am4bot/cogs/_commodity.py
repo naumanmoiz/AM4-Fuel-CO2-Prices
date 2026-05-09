@@ -1,3 +1,11 @@
+"""Shared command-group factory for ``/fuel`` and ``/co2``.
+
+The two commodity command groups have identical shapes
+(``current``/``best``/``interval``); only the bound commodity differs.
+This factory builds the group once per call so ``cogs/fuel.py`` and
+``cogs/co2.py`` stay one-liners.
+"""
+
 from __future__ import annotations
 
 import time
@@ -16,12 +24,15 @@ _WINDOW_CHOICES = [app_commands.Choice(name=w.label, value=w.label) for w in Win
 
 
 def _store(interaction: discord.Interaction) -> "Store":
+    """Reach the bot's store from inside an interaction handler."""
     return interaction.client.store  # type: ignore[attr-defined]
 
 
 def make_commodity_group(
     commodity: Commodity, name: str, description: str
 ) -> app_commands.Group:
+    """Build a slash command group with ``current``/``best``/``interval``
+    subcommands, all bound to the given commodity."""
     group = app_commands.Group(name=name, description=description)
 
     @group.command(name="current", description=f"Latest known {name} price")
