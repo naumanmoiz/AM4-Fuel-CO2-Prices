@@ -16,6 +16,7 @@ on a Linux VM (home lab / Proxmox).
 - [Quick start (Docker Compose)](#quick-start-docker-compose)
 - [Discord developer-portal setup](#discord-developer-portal-setup)
 - [Environment reference](#environment-reference)
+- [Running with mgtools.cloud (no token required)](#running-with-mgtoolscloud-no-token-required)
 - [Running with mock data (no token required)](#running-with-mock-data-no-token-required)
 - [Configuring the AM4Help adapter](#configuring-the-am4help-adapter)
 - [Day-2 ops](#day-2-ops)
@@ -70,8 +71,12 @@ am4bot v0.1.0
 - Python 3.11+, `discord.py` 2.4+ slash commands via `app_commands`
 - `aiosqlite` price store, single `prices` table, one row per **price change**
   (deduplicated via `insert_if_changed`)
-- Pluggable price source via the `PriceAdapter` Protocol. Three adapters
+- Pluggable price source via the `PriceAdapter` Protocol. Four adapters
   ship today:
+  - `mgtools` — POSTs to [mgtools.cloud](https://mgtools.cloud)'s
+    public `data-predict-v2` endpoint and records the slot the API
+    marks as current. **No auth required** — easiest live source to
+    enable.
   - `am4help` — pulls from `api.am4help.com` with an `x-access-token`
     header. Endpoint path and JSON field paths are configurable via env,
     so you can re-point the adapter once you confirm the real prices
@@ -79,8 +84,7 @@ am4bot v0.1.0
   - `mock` — replays a static sample dataset from
     [`theheuman/am4-helper`](https://github.com/theheuman/am4-helper) by
     mapping today's day-of-month + time-of-day to the matching entry.
-    **Not real prices.** Useful for demoing the bot before you have an
-    AM4Help token, or for running offline.
+    **Not real prices.** Useful for demoing the bot or running offline.
   - `null` — no polling; data only enters via `/submit`. Useful for
     bootstrapping before any upstream is wired up.
 - Background poller is a `discord.ext.tasks.loop` (default 5 min).
@@ -145,19 +149,48 @@ canonical list with inline docs.
 | `GUILD_ID` | no | — | Set for instant per-guild command sync |
 | `DB_PATH` | no | `/data/prices.db` | Inside container |
 | `LOG_LEVEL` | no | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
-| `PRICE_SOURCE` | no | `null` | `null`, `am4help`, or `mock` |
+| `PRICE_SOURCE` | no | `null` | `null`, `mgtools`, `am4help`, or `mock` |
 | `POLL_INTERVAL` | no | `300` | Seconds between polls |
 | `AM4HELP_TOKEN` | only if `am4help` | — | Sent as `x-access-token` |
 | `AM4HELP_BASE_URL` | no | `https://api.am4help.com` | |
 | `AM4HELP_PRICES_PATH` | no | `/prices` | Confirm with the API owner |
 | `AM4HELP_FUEL_FIELD` | no | `fuel` | Dotted JSON path |
 | `AM4HELP_CO2_FIELD` | no | `co2` | Dotted JSON path |
+| `MGTOOLS_BASE_URL` | no | `https://api.mgtools.cloud` | |
+| `MGTOOLS_PRICES_PATH` | no | `/v1/data-predict-v2` | |
+| `MGTOOLS_TIMEZONE` | no | `UTC` | IANA tz sent in POST body |
+| `MGTOOLS_USER_AGENT` | no | Firefox UA | WAF requires browser-style UA |
+| `MGTOOLS_ORIGIN` | no | `https://mgtools.cloud` | CORS check |
+| `MGTOOLS_REFERER` | no | `https://mgtools.cloud/` | CORS check |
 | `MOCK_DATA_URL` | no | theheuman/am4-helper sample | Source JSON for `PRICE_SOURCE=mock` |
 | `SUBMIT_ALLOWED_ROLES` | no | — | CSV of role IDs |
 | `SUBMIT_ALLOWED_USERS` | no | — | CSV of user IDs |
 
 If both `SUBMIT_ALLOWED_ROLES` and `SUBMIT_ALLOWED_USERS` are empty,
 `/submit` falls back to **server-admin only**.
+
+## Running with mgtools.cloud (no token required)
+
+The fastest path to live prices. mgtools.cloud's `data-predict-v2`
+endpoint is publicly accessible (no API key, no Discord, no account)
+and returns 48 half-hourly slots for the day with the current slot
+explicitly marked. We only ingest the marked slot — the other 47 are
+forecasts.
+
+In `deploy/.env`:
+
+```
+PRICE_SOURCE=mgtools
+```
+
+Optionally override `MGTOOLS_TIMEZONE` (default `UTC`) if you want the
+endpoint to localise its slot labels to your timezone — it doesn't
+affect which slot is "current", just how it's labelled in the
+forecast. Then `docker compose up -d` and within `POLL_INTERVAL`
+seconds the first tick records `recorded fuel=... from mgtools`.
+
+The `source` column on every row is `mgtools` so you can audit where
+each price came from in the SQL log.
 
 ## Running with mock data (no token required)
 

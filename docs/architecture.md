@@ -44,6 +44,7 @@ src/am4bot/
 │   ├── base.py        # PriceAdapter Protocol
 │   ├── null.py        # NullAdapter (no-op)
 │   ├── am4help.py     # AM4HelpAdapter (HTTP + dotted-path JSON)
+│   ├── mgtools.py     # MGToolsAdapter (POST + arrow-marker parser)
 │   ├── mock_replay.py # MockReplayAdapter (static dataset replay; demo only)
 │   └── factory.py     # build_adapter(config) -> PriceAdapter
 ├── cogs/
@@ -195,6 +196,25 @@ Three contracts:
    keeps adapter implementations honest.
 3. **`aclose()` releases resources.** Called by `AM4Bot.close()` on
    shutdown so aiohttp sessions close cleanly.
+
+### MGToolsAdapter
+
+`mgtools.py` POSTs `{"timezone": "<tz>"}` to mgtools.cloud's
+`data-predict-v2` endpoint. The response is a 48-element array of
+half-hourly forecasts with one entry's `time` field prefixed with
+`"-> "` to indicate the current slot. The adapter ingests **only the
+marked slot** — storing the 47 future predictions would distort
+`/fuel best` and `/fuel interval` answers, since those queries
+implicitly assume rows reflect prices that actually occurred.
+
+The endpoint requires no API key. WAF-side enforcement is limited to
+CORS-style `Origin` and `Referer` checks plus a browser-style
+`User-Agent`. All three are configurable via env vars and default to
+values that match what mgtools.cloud's own SPA sends.
+
+The adapter respects the response's `maintenance` flag (skips the
+tick instead of writing stale data) and tolerates missing/malformed
+markers by returning `[]` rather than raising.
 
 ### MockReplayAdapter
 

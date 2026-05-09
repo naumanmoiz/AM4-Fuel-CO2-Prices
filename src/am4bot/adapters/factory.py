@@ -7,6 +7,7 @@ import logging
 from ..config import Config
 from .am4help import AM4HelpAdapter
 from .base import PriceAdapter
+from .mgtools import MGToolsAdapter
 from .mock_replay import MockReplayAdapter
 from .null import NullAdapter
 
@@ -40,7 +41,16 @@ def build_adapter(config: Config) -> PriceAdapter:
             "Use this only for demo/development."
         )
         return MockReplayAdapter(data_url=config.mock_data_url)
+    if src == "mgtools":
+        return MGToolsAdapter(
+            base_url=config.mgtools_base_url,
+            prices_path=config.mgtools_prices_path,
+            timezone=config.mgtools_timezone,
+            user_agent=config.mgtools_user_agent,
+            origin=config.mgtools_origin,
+            referer=config.mgtools_referer,
+        )
     raise ValueError(
         f"unknown PRICE_SOURCE: {config.price_source!r} "
-        "(expected 'null', 'am4help', or 'mock')"
+        "(expected 'null', 'am4help', 'mock', or 'mgtools')"
     )

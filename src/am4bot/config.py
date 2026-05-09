@@ -37,6 +37,12 @@ class Config:
     am4help_fuel_field: str
     am4help_co2_field: str
     mock_data_url: str
+    mgtools_base_url: str
+    mgtools_prices_path: str
+    mgtools_timezone: str
+    mgtools_user_agent: str
+    mgtools_origin: str
+    mgtools_referer: str
     submit_allowed_roles: tuple[int, ...] = field(default_factory=tuple)
     submit_allowed_users: tuple[int, ...] = field(default_factory=tuple)
 
@@ -75,6 +81,19 @@ class Config:
                 "https://raw.githubusercontent.com/theheuman/am4-helper/"
                 "main/src/assets/resource-prices.json",
             ),
+            mgtools_base_url=os.environ.get(
+                "MGTOOLS_BASE_URL", "https://api.mgtools.cloud"
+            ),
+            mgtools_prices_path=os.environ.get(
+                "MGTOOLS_PRICES_PATH", "/v1/data-predict-v2"
+            ),
+            mgtools_timezone=os.environ.get("MGTOOLS_TIMEZONE", "UTC"),
+            mgtools_user_agent=os.environ.get(
+                "MGTOOLS_USER_AGENT",
+                "Mozilla/5.0 (X11; Linux x86_64; rv:150.0) Gecko/20100101 Firefox/150.0",
+            ),
+            mgtools_origin=os.environ.get("MGTOOLS_ORIGIN", "https://mgtools.cloud"),
+            mgtools_referer=os.environ.get("MGTOOLS_REFERER", "https://mgtools.cloud/"),
             submit_allowed_roles=_csv_ints(os.environ.get("SUBMIT_ALLOWED_ROLES", "")),
             submit_allowed_users=_csv_ints(os.environ.get("SUBMIT_ALLOWED_USERS", "")),
         )
