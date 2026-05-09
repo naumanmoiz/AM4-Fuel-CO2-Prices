@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "am4bot"
+version = "0.1.0"
+description = "Discord bot that tracks Airline Manager 4 fuel and CO2 quota prices."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = [
+    "discord.py>=2.4,<3",
+    "aiosqlite>=0.20",
+    "aiohttp>=3.9",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+am4bot = "am4bot.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+am4bot = ["py.typed"]
