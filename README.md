@@ -16,6 +16,7 @@ on a Linux VM (home lab / Proxmox).
 - [Quick start (Docker Compose)](#quick-start-docker-compose)
 - [Discord developer-portal setup](#discord-developer-portal-setup)
 - [Environment reference](#environment-reference)
+- [Running with mock data (no token required)](#running-with-mock-data-no-token-required)
 - [Configuring the AM4Help adapter](#configuring-the-am4help-adapter)
 - [Day-2 ops](#day-2-ops)
 - [Troubleshooting](#troubleshooting)
@@ -69,14 +70,19 @@ am4bot v0.1.0
 - Python 3.11+, `discord.py` 2.4+ slash commands via `app_commands`
 - `aiosqlite` price store, single `prices` table, one row per **price change**
   (deduplicated via `insert_if_changed`)
-- Pluggable price source via the `PriceAdapter` Protocol. Two adapters
+- Pluggable price source via the `PriceAdapter` Protocol. Three adapters
   ship today:
   - `am4help` — pulls from `api.am4help.com` with an `x-access-token`
     header. Endpoint path and JSON field paths are configurable via env,
     so you can re-point the adapter once you confirm the real prices
     endpoint with the API owner without code changes.
+  - `mock` — replays a static sample dataset from
+    [`theheuman/am4-helper`](https://github.com/theheuman/am4-helper) by
+    mapping today's day-of-month + time-of-day to the matching entry.
+    **Not real prices.** Useful for demoing the bot before you have an
+    AM4Help token, or for running offline.
   - `null` — no polling; data only enters via `/submit`. Useful for
-    bootstrapping before the upstream API is wired up.
+    bootstrapping before any upstream is wired up.
 - Background poller is a `discord.ext.tasks.loop` (default 5 min).
 
 For a deeper walkthrough of the components, data flow, and how to add
@@ -139,18 +145,36 @@ canonical list with inline docs.
 | `GUILD_ID` | no | — | Set for instant per-guild command sync |
 | `DB_PATH` | no | `/data/prices.db` | Inside container |
 | `LOG_LEVEL` | no | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
-| `PRICE_SOURCE` | no | `null` | `null` or `am4help` |
+| `PRICE_SOURCE` | no | `null` | `null`, `am4help`, or `mock` |
 | `POLL_INTERVAL` | no | `300` | Seconds between polls |
 | `AM4HELP_TOKEN` | only if `am4help` | — | Sent as `x-access-token` |
 | `AM4HELP_BASE_URL` | no | `https://api.am4help.com` | |
 | `AM4HELP_PRICES_PATH` | no | `/prices` | Confirm with the API owner |
 | `AM4HELP_FUEL_FIELD` | no | `fuel` | Dotted JSON path |
 | `AM4HELP_CO2_FIELD` | no | `co2` | Dotted JSON path |
+| `MOCK_DATA_URL` | no | theheuman/am4-helper sample | Source JSON for `PRICE_SOURCE=mock` |
 | `SUBMIT_ALLOWED_ROLES` | no | — | CSV of role IDs |
 | `SUBMIT_ALLOWED_USERS` | no | — | CSV of user IDs |
 
 If both `SUBMIT_ALLOWED_ROLES` and `SUBMIT_ALLOWED_USERS` are empty,
 `/submit` falls back to **server-admin only**.
+
+## Running with mock data (no token required)
+
+If you don't yet have an AM4Help token but want the bot to *behave* like
+it has live data — `/fuel current` returning a number, `/fuel best` and
+`/fuel interval` populating over time — set:
+
+```
+PRICE_SOURCE=mock
+```
+
+…and `docker compose up -d`. The bot fetches a static sample dataset
+from `theheuman/am4-helper` once at startup, then on every poll tick
+maps today's day-of-month and current time-of-day to the matching
+sample. The `source` column in the DB and the embed footer show
+`mock`, so you'll always know the values are synthetic. Switch back to
+`am4help` once you have a real token.
 
 ## Configuring the AM4Help adapter
 

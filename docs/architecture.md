@@ -44,6 +44,7 @@ src/am4bot/
 │   ├── base.py        # PriceAdapter Protocol
 │   ├── null.py        # NullAdapter (no-op)
 │   ├── am4help.py     # AM4HelpAdapter (HTTP + dotted-path JSON)
+│   ├── mock_replay.py # MockReplayAdapter (static dataset replay; demo only)
 │   └── factory.py     # build_adapter(config) -> PriceAdapter
 ├── cogs/
 │   ├── _commodity.py  # shared command-group factory
@@ -194,6 +195,22 @@ Three contracts:
    keeps adapter implementations honest.
 3. **`aclose()` releases resources.** Called by `AM4Bot.close()` on
    shutdown so aiohttp sessions close cleanly.
+
+### MockReplayAdapter
+
+`mock_replay.py` is a non-network demo adapter that replays a static
+JSON dataset. It exists as a documented example of "what a third
+adapter looks like" and as a way to bring up the bot's UX before any
+live upstream is wired up. The dataset (sourced at runtime from
+`theheuman/am4-helper` by default, but any URL with the same shape
+works) is loaded once on first `fetch()` and then indexed by
+day-of-month and time-of-day. Each tick maps "now" to the closest
+sample.
+
+The `source` field on every record is the literal string `"mock"` so
+operators can always tell synthetic data from real data when looking
+at `/status`, embed footers, or the SQL audit trail. Logs a
+`WARNING` at construction time so it can't be enabled silently.
 
 ### Adding a new adapter
 

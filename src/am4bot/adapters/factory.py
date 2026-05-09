@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+
 from ..config import Config
 from .am4help import AM4HelpAdapter
 from .base import PriceAdapter
+from .mock_replay import MockReplayAdapter
 from .null import NullAdapter
+
+log = logging.getLogger(__name__)
 
 
 def build_adapter(config: Config) -> PriceAdapter:
@@ -29,6 +34,13 @@ def build_adapter(config: Config) -> PriceAdapter:
             fuel_field=config.am4help_fuel_field,
             co2_field=config.am4help_co2_field,
         )
+    if src == "mock":
+        log.warning(
+            "PRICE_SOURCE=mock — replaying static sample data, NOT live AM4 prices. "
+            "Use this only for demo/development."
+        )
+        return MockReplayAdapter(data_url=config.mock_data_url)
     raise ValueError(
-        f"unknown PRICE_SOURCE: {config.price_source!r} (expected 'null' or 'am4help')"
+        f"unknown PRICE_SOURCE: {config.price_source!r} "
+        "(expected 'null', 'am4help', or 'mock')"
     )
