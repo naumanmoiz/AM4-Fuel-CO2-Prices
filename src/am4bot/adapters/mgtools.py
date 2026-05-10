@@ -125,14 +125,17 @@ class MGToolsAdapter:
         ]
 
     async def fetch_forecast(self) -> list[PriceRecord]:
-        """Return upcoming forecasted slots (everything after the '->' marker).
+        """Return the next 24h of forecasted slots.
 
-        mgtools' response is a 48-element array, one per half-hour of the
-        day. Since the array is ordered chronologically and exactly one
-        entry is marked as "now", every entry after the marker is exactly
-        ``30 * (k+1)`` minutes in the future. We don't need timezone math:
-        we just compute future timestamps as ``now + 30min * k`` for each
-        post-marker slot.
+        mgtools' response is a 48-element cyclical array — entries
+        before the '->' marker represent the same slots one day in the
+        future (the model assumes the daily pattern repeats). So we
+        rotate the array to ``[entries_after_marker] + [entries_before_marker]``
+        and emit all 47 non-marker entries as future records, where slot
+        ``k`` (1-indexed) is exactly ``30 * k`` minutes from now.
+
+        This gives a full 24-hour forecast horizon regardless of when
+        the bot is queried, instead of trailing off late in the day.
         """
         try:
             session = await self._get_session()
@@ -162,9 +165,14 @@ class MGToolsAdapter:
         if marker_idx is None:
             return []
 
+        # Rotate: entries after marker = today's remaining, entries before
+        # marker = same slots in the next daily cycle (tomorrow). Together
+        # they cover the next 24h.
+        rotated = list(data[marker_idx + 1 :]) + list(data[:marker_idx])
+
         ts_now = int(time.time())
         records: list[PriceRecord] = []
-        for k, entry in enumerate(data[marker_idx + 1 :], start=1):
+        for k, entry in enumerate(rotated, start=1):
             if not isinstance(entry, dict):
                 continue
             try:

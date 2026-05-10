@@ -4,19 +4,17 @@ Every subcommand returns combined fuel + CO2 output in a single embed.
 The two groups exist for discoverability but produce identical
 responses — typing ``/fuel best`` is the same as ``/co2 best``.
 
-Data semantics (post forecast-redesign):
+Data semantics:
 
-- ``current`` : latest *observed* prices from the store (what we
-  actually paid attention to most recently). Always available.
-- ``best``    : top 5 lowest *upcoming* slots, sorted by price.
-  Forecast-based — falls back to "no forecast" message if the
-  configured price source doesn't publish forecasts.
-- ``interval``: min/avg/max of *upcoming* slots in the chosen window.
-  Forecast-based — same fallback as ``best``.
-
-The historical/observed view of best and interval was removed in
-favour of forecast-driven answers, because that's what's actionable
-("when should I buy fuel next?") rather than retrospective.
+- ``current`` : latest *observed* prices from the store. Always
+  available regardless of price source.
+- ``best``    : top 5 lowest *upcoming* forecast slots, sorted by
+  price. Times shown in the viewer's local timezone via
+  ``<t:UNIX:t>``.
+- ``interval``: chronological *forecast timeline* over the chosen
+  window — one row per upcoming half-hour slot, colour-coded by
+  cheap/mid/expensive tercile. Times rendered server-side in
+  ``DISPLAY_TIMEZONE`` (code blocks can't auto-localize).
 """
 
 from __future__ import annotations
@@ -27,11 +25,12 @@ from typing import TYPE_CHECKING
 import discord
 from discord import app_commands
 
-from ..models import Commodity, PriceRecord, Stats, Window
+from ..models import PriceRecord, Window
 from ..ui import embeds
 
 if TYPE_CHECKING:
     from ..adapters.base import PriceAdapter
+    from ..config import Config
     from ..store import Store
 
 _WINDOW_CHOICES = [app_commands.Choice(name=w.label, value=w.label) for w in Window]
@@ -46,31 +45,16 @@ def _adapter(interaction: discord.Interaction) -> "PriceAdapter":
     return interaction.client.adapter  # type: ignore[attr-defined]
 
 
+def _config(interaction: discord.Interaction) -> "Config":
+    return interaction.client.config  # type: ignore[attr-defined]
+
+
 def _split_by_commodity(
     records: list[PriceRecord],
 ) -> tuple[list[PriceRecord], list[PriceRecord]]:
     fuel = [r for r in records if r.commodity == "fuel"]
     co2 = [r for r in records if r.commodity == "co2"]
     return fuel, co2
-
-
-def _stats_from(
-    records: list[PriceRecord], window_start: int, window_end: int
-) -> Stats:
-    if not records:
-        return Stats(
-            min=0.0, avg=0.0, max=0.0, count=0,
-            window_start=window_start, window_end=window_end,
-        )
-    prices = [r.price for r in records]
-    return Stats(
-        min=min(prices),
-        avg=sum(prices) / len(prices),
-        max=max(prices),
-        count=len(prices),
-        window_start=window_start,
-        window_end=window_end,
-    )
 
 
 def make_commodity_group(name: str, description: str) -> app_commands.Group:
@@ -92,8 +76,6 @@ def make_commodity_group(name: str, description: str) -> app_commands.Group:
     async def _best(interaction: discord.Interaction) -> None:
         forecast = await _adapter(interaction).fetch_forecast()
         fuel_recs, co2_recs = _split_by_commodity(forecast)
-        # Sort ascending by price; tiebreak by earliest time so user gets
-        # the soonest opportunity at the same price first.
         fuel_top = sorted(fuel_recs, key=lambda r: (r.price, r.ts))[:_BEST_TOP_N]
         co2_top = sorted(co2_recs, key=lambda r: (r.price, r.ts))[:_BEST_TOP_N]
         await interaction.response.send_message(
@@ -104,9 +86,9 @@ def make_commodity_group(name: str, description: str) -> app_commands.Group:
 
     @group.command(
         name="interval",
-        description="min/avg/max of upcoming forecast over a window",
+        description="Chronological forecast timeline over the chosen window",
     )
-    @app_commands.describe(interval="Window size into the future")
+    @app_commands.describe(interval="How far into the future to show")
     @app_commands.choices(interval=_WINDOW_CHOICES)
     async def _interval(
         interaction: discord.Interaction, interval: app_commands.Choice[str]
@@ -116,12 +98,13 @@ def make_commodity_group(name: str, description: str) -> app_commands.Group:
         cutoff = now + win.seconds
         forecast = await _adapter(interaction).fetch_forecast()
         fuel_recs, co2_recs = _split_by_commodity(forecast)
-        fuel_in_window = [r for r in fuel_recs if r.ts <= cutoff]
-        co2_in_window = [r for r in co2_recs if r.ts <= cutoff]
-        fuel_stats = _stats_from(fuel_in_window, now, cutoff)
-        co2_stats = _stats_from(co2_in_window, now, cutoff)
+        fuel_in = [r for r in fuel_recs if r.ts <= cutoff]
+        co2_in = [r for r in co2_recs if r.ts <= cutoff]
         await interaction.response.send_message(
-            embed=embeds.make_combined_interval_forecast(fuel_stats, co2_stats, win)
+            embed=embeds.make_combined_forecast_timeline(
+                fuel_in, co2_in, win,
+                display_timezone=_config(interaction).display_timezone,
+            )
         )
 
     return group
