@@ -6,22 +6,28 @@ touch the store, the adapter, or interaction state — that keeps cog
 handlers easy to reason about and the embed shapes easy to tweak in
 one place.
 
-Timestamps render as ``<t:UNIX:R>`` (Discord's relative-time syntax)
-so each user sees them in their own timezone, AND past vs future
-timestamps are formatted differently ("5 minutes ago" vs "in 4 hours")
-without us having to do anything special.
+Most timestamps render as ``<t:UNIX:R>`` (Discord's relative-time
+syntax) or ``<t:UNIX:t>`` (short clock time) so each user sees them
+in their own timezone. The forecast *timeline* (``/fuel interval``)
+is the exception — it's a monospaced ANSI code block whose times are
+formatted server-side in ``DISPLAY_TIMEZONE`` (default UTC, falls
+back to ``MGTOOLS_TIMEZONE``) since code blocks are literal text and
+can't auto-localize.
 
 The ``/fuel`` and ``/co2`` slash command groups both produce
 *combined* embeds — every response shows fuel + CO2 side by side
 regardless of which group the user invoked. ``current`` returns
 observed prices from the DB; ``best`` and ``interval`` are forecast-
 based and return empty embeds with an explanation when the configured
-adapter doesn't publish forecasts. Per-commodity rendering is reserved
-for the ``/submit`` confirmation, which only ever records one
-commodity at a time.
+adapter doesn't publish forecasts. Per-commodity rendering is
+reserved for the ``/submit`` confirmation, which only ever records
+one commodity at a time.
 """
 
 from __future__ import annotations
+
+import zoneinfo
+from datetime import datetime, timezone
 
 import discord
 
@@ -29,6 +35,16 @@ from .. import __version__
 from ..models import Commodity, PriceRecord, Stats, Window
 
 _TITLE: dict[Commodity, str] = {"fuel": "Fuel", "co2": "CO₂ Quota"}
+
+# Discord ANSI code-block colour codes
+_ANSI_RESET = "[0m"
+_ANSI_GREEN = "[0;32m"   # cheap
+_ANSI_RED = "[0;31m"     # expensive
+_ANSI_GREY = "[0;30m"    # day-separator label
+
+# Description hard cap is 4096; reserve a couple of hundred chars for
+# the code-fence wrapper, headers, and a possible truncation notice.
+_MAX_TIMELINE_BODY = 3800
 
 
 def make_current(rec: PriceRecord | None, commodity: Commodity) -> discord.Embed:
@@ -69,11 +85,12 @@ def make_combined_current(
 
 
 def _top_n_field(records: list[PriceRecord]) -> str:
+    """Render top-N forecast list with HH:MM (user-local) timestamps."""
     if not records:
         return "no data"
-    # Right-align prices in a fixed-width column so the list reads cleanly
     width = max(len(f"{r.price:,.2f}") for r in records)
-    lines = [f"`{r.price:>{width},.2f}`  ·  <t:{r.ts}:R>" for r in records]
+    # <t:UNIX:t> renders as short time-of-day in the viewer's tz, e.g. "9:30 PM"
+    lines = [f"`{r.price:>{width},.2f}`  ·  <t:{r.ts}:t>" for r in records]
     return "\n".join(lines)
 
 
@@ -82,12 +99,7 @@ def make_combined_best_forecast(
     co2_top: list[PriceRecord],
     top_n: int = 5,
 ) -> discord.Embed:
-    """Top N cheapest upcoming forecast slots for fuel and CO2.
-
-    Records' timestamps are in the future, so Discord's <t:UNIX:R>
-    syntax renders them as 'in 30 minutes', 'in 4 hours', etc. — which
-    is exactly what the user wants for planning ("when's the next dip?").
-    """
+    """Top N cheapest upcoming forecast slots for fuel and CO2."""
     e = discord.Embed(
         title=f"AM4 prices — {top_n} cheapest upcoming",
         color=discord.Color.gold(),
@@ -103,39 +115,116 @@ def make_combined_best_forecast(
     return e
 
 
-def _stats_field(stats: Stats) -> str:
-    if stats.count == 0:
-        return "no data"
-    return (
-        f"min **{stats.min:,.2f}**\n"
-        f"avg {stats.avg:,.2f}\n"
-        f"max {stats.max:,.2f}\n"
-        f"({stats.count} samples)"
-    )
+def _resolve_tz(name: str) -> "zoneinfo.ZoneInfo | timezone":
+    try:
+        return zoneinfo.ZoneInfo(name)
+    except zoneinfo.ZoneInfoNotFoundError:
+        return timezone.utc
 
 
-def make_combined_interval_forecast(
-    fuel_stats: Stats, co2_stats: Stats, window: Window
+def _terciles(values: list[float]) -> tuple[float, float]:
+    """Return (cheap_max, expensive_min) thresholds at the 33rd/66th
+    percentiles of ``values``. Used to colour-code the timeline rows.
+    Returns (0, 0) for an empty input (no colouring will fire)."""
+    if not values:
+        return (0.0, 0.0)
+    sorted_v = sorted(values)
+    n = len(sorted_v)
+    cheap = sorted_v[max(0, n // 3 - 1)]
+    expensive = sorted_v[min(n - 1, (2 * n) // 3)]
+    return (cheap, expensive)
+
+
+def _coloured(value: float, thresholds: tuple[float, float], width: int) -> str:
+    """Format ``value`` to the given column width, ANSI-coloured by tercile."""
+    cheap_max, expensive_min = thresholds
+    text = f"{int(round(value)):>{width}}"
+    if cheap_max < expensive_min:  # otherwise all values are equal
+        if value <= cheap_max:
+            return f"{_ANSI_GREEN}{text}{_ANSI_RESET}"
+        if value >= expensive_min:
+            return f"{_ANSI_RED}{text}{_ANSI_RESET}"
+    return text
+
+
+def make_combined_forecast_timeline(
+    fuel: list[PriceRecord],
+    co2: list[PriceRecord],
+    window: Window,
+    display_timezone: str = "UTC",
 ) -> discord.Embed:
-    """Forecast min/avg/max for fuel and CO2 over an upcoming window."""
+    """Chronological forecast timeline for ``/fuel interval`` / ``/co2 interval``.
+
+    Renders one row per upcoming half-hour slot inside the chosen
+    window: ``HH:MM   FUEL   CO2``, colour-coded by tercile (green =
+    cheap, red = expensive). Day boundaries get a separator label so
+    a 24h forecast at 18:00 reads "today's evening then tomorrow's
+    morning" naturally.
+
+    Times are formatted in ``display_timezone`` because Discord's
+    auto-localising ``<t:UNIX:t>`` syntax doesn't render inside a
+    code block — code blocks are literal text. Picking one timezone
+    server-side is the cleanest trade-off.
+    """
     e = discord.Embed(
         title=f"AM4 prices — next {window.label} forecast",
         color=discord.Color.blurple(),
     )
-    if fuel_stats.count == 0 and co2_stats.count == 0:
+
+    if not fuel and not co2:
         e.description = (
             "No forecast data available for this window. Forecasts "
-            "require `PRICE_SOURCE=mgtools` or `PRICE_SOURCE=mock`. "
-            "mgtools only publishes forecasts to end of day, so a 7d "
-            "window may return empty late in the day."
+            "require `PRICE_SOURCE=mgtools` or `PRICE_SOURCE=mock`."
         )
         return e
-    e.add_field(name="Fuel", value=_stats_field(fuel_stats), inline=True)
-    e.add_field(name="CO₂ Quota", value=_stats_field(co2_stats), inline=True)
-    e.add_field(
-        name="Window",
-        value=f"until <t:{fuel_stats.window_end}:R>",
-        inline=False,
+
+    # Group by timestamp: ts -> [fuel_price | None, co2_price | None]
+    by_ts: dict[int, list[float | None]] = {}
+    for r in fuel:
+        by_ts.setdefault(r.ts, [None, None])[0] = r.price
+    for r in co2:
+        by_ts.setdefault(r.ts, [None, None])[1] = r.price
+    sorted_ts = sorted(by_ts.keys())
+
+    fuel_prices = [v[0] for v in by_ts.values() if v[0] is not None]
+    co2_prices = [v[1] for v in by_ts.values() if v[1] is not None]
+
+    fuel_thresh = _terciles(fuel_prices)
+    co2_thresh = _terciles(co2_prices)
+
+    # Column widths sized to the largest values we'll display
+    fuel_w = max((len(str(int(round(p)))) for p in fuel_prices), default=4)
+    co2_w = max((len(str(int(round(p)))) for p in co2_prices), default=3)
+
+    tz = _resolve_tz(display_timezone)
+    header = f"{'Time':<5}  {'Fuel':>{fuel_w}}  {'CO₂':>{co2_w}}"
+    separator = f"{'-' * 5}  {'-' * fuel_w}  {'-' * co2_w}"
+    lines: list[str] = [header, separator]
+
+    last_date = None
+    for ts in sorted_ts:
+        dt = datetime.fromtimestamp(ts, tz=tz)
+        if last_date is not None and dt.date() != last_date:
+            day_label = dt.strftime("%a %b %-d")
+            lines.append(f"{_ANSI_GREY}── {day_label} ──{_ANSI_RESET}")
+        last_date = dt.date()
+
+        time_str = dt.strftime("%H:%M")
+        fuel_p, co2_p = by_ts[ts]
+        fuel_cell = _coloured(fuel_p, fuel_thresh, fuel_w) if fuel_p is not None else " " * fuel_w
+        co2_cell = _coloured(co2_p, co2_thresh, co2_w) if co2_p is not None else " " * co2_w
+        lines.append(f"{time_str}  {fuel_cell}  {co2_cell}")
+
+    body = "\n".join(lines)
+    if len(body) > _MAX_TIMELINE_BODY:
+        body = body[:_MAX_TIMELINE_BODY] + "\n... (truncated)"
+
+    e.description = f"```ansi\n{body}\n```"
+    e.set_footer(
+        text=(
+            f"{len(sorted_ts)} forecasted slots · times in {display_timezone}"
+            " · green = cheap · red = expensive"
+        )
     )
     return e
 
