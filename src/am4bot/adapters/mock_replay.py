@@ -172,6 +172,35 @@ class MockReplayAdapter:
             PriceRecord(commodity="co2", price=co2, ts=ts, source=self.name),
         ]
 
+    async def fetch_forecast(self) -> list[PriceRecord]:
+        """Return today's remaining samples as a synthetic forecast.
+
+        Uses the day-of-month-keyed sample bucket the same way ``fetch``
+        does, but returns every sample whose time-of-day is *after* now,
+        with each sample's timestamp projected forward to today.
+        """
+        await self._ensure_loaded()
+        if not self._available_days:
+            return []
+        now = datetime.now(timezone.utc)
+        idx = (now.day - 1) % len(self._available_days)
+        day_int = self._available_days[idx]
+        samples = self._by_day[day_int]
+        sec_now = now.hour * 3600 + now.minute * 60 + now.second
+        ts_now = int(time.time())
+        records: list[PriceRecord] = []
+        for sec, fuel, co2 in samples:
+            if sec <= sec_now:
+                continue
+            ts_future = ts_now + (sec - sec_now)
+            records.append(
+                PriceRecord(commodity="fuel", price=fuel, ts=ts_future, source=self.name)
+            )
+            records.append(
+                PriceRecord(commodity="co2", price=co2, ts=ts_future, source=self.name)
+            )
+        return records
+
     async def aclose(self) -> None:
         if self._session is not None and not self._session.closed:
             await self._session.close()

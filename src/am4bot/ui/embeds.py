@@ -7,13 +7,18 @@ handlers easy to reason about and the embed shapes easy to tweak in
 one place.
 
 Timestamps render as ``<t:UNIX:R>`` (Discord's relative-time syntax)
-so each user sees them in their own timezone.
+so each user sees them in their own timezone, AND past vs future
+timestamps are formatted differently ("5 minutes ago" vs "in 4 hours")
+without us having to do anything special.
 
 The ``/fuel`` and ``/co2`` slash command groups both produce
 *combined* embeds — every response shows fuel + CO2 side by side
-regardless of which group the user invoked. Per-commodity rendering
-is reserved for the ``/submit`` confirmation, which only ever
-records one commodity at a time.
+regardless of which group the user invoked. ``current`` returns
+observed prices from the DB; ``best`` and ``interval`` are forecast-
+based and return empty embeds with an explanation when the configured
+adapter doesn't publish forecasts. Per-commodity rendering is reserved
+for the ``/submit`` confirmation, which only ever records one
+commodity at a time.
 """
 
 from __future__ import annotations
@@ -72,17 +77,27 @@ def _top_n_field(records: list[PriceRecord]) -> str:
     return "\n".join(lines)
 
 
-def make_combined_best(
+def make_combined_best_forecast(
     fuel_top: list[PriceRecord],
     co2_top: list[PriceRecord],
-    window_label: str = "24h",
     top_n: int = 5,
 ) -> discord.Embed:
-    """Combined best-price embed: top N lowest fuel + top N lowest CO2."""
+    """Top N cheapest upcoming forecast slots for fuel and CO2.
+
+    Records' timestamps are in the future, so Discord's <t:UNIX:R>
+    syntax renders them as 'in 30 minutes', 'in 4 hours', etc. — which
+    is exactly what the user wants for planning ("when's the next dip?").
+    """
     e = discord.Embed(
-        title=f"AM4 prices — top {top_n} lowest ({window_label})",
+        title=f"AM4 prices — {top_n} cheapest upcoming",
         color=discord.Color.gold(),
     )
+    if not fuel_top and not co2_top:
+        e.description = (
+            "No forecast data available. Forecasts require "
+            "`PRICE_SOURCE=mgtools` or `PRICE_SOURCE=mock`."
+        )
+        return e
     e.add_field(name="Fuel", value=_top_n_field(fuel_top), inline=True)
     e.add_field(name="CO₂ Quota", value=_top_n_field(co2_top), inline=True)
     return e
@@ -99,19 +114,27 @@ def _stats_field(stats: Stats) -> str:
     )
 
 
-def make_combined_interval(
+def make_combined_interval_forecast(
     fuel_stats: Stats, co2_stats: Stats, window: Window
 ) -> discord.Embed:
-    """Combined min/avg/max embed for ``/fuel interval`` / ``/co2 interval``."""
+    """Forecast min/avg/max for fuel and CO2 over an upcoming window."""
     e = discord.Embed(
-        title=f"AM4 prices — last {window.label}",
+        title=f"AM4 prices — next {window.label} forecast",
         color=discord.Color.blurple(),
     )
+    if fuel_stats.count == 0 and co2_stats.count == 0:
+        e.description = (
+            "No forecast data available for this window. Forecasts "
+            "require `PRICE_SOURCE=mgtools` or `PRICE_SOURCE=mock`. "
+            "mgtools only publishes forecasts to end of day, so a 7d "
+            "window may return empty late in the day."
+        )
+        return e
     e.add_field(name="Fuel", value=_stats_field(fuel_stats), inline=True)
     e.add_field(name="CO₂ Quota", value=_stats_field(co2_stats), inline=True)
     e.add_field(
         name="Window",
-        value=f"from <t:{fuel_stats.window_start}:R>",
+        value=f"until <t:{fuel_stats.window_end}:R>",
         inline=False,
     )
     return e

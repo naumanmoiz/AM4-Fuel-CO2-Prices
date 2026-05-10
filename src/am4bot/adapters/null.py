@@ -17,5 +17,8 @@ class NullAdapter:
     async def fetch(self) -> list[PriceRecord]:
         return []
 
+    async def fetch_forecast(self) -> list[PriceRecord]:
+        return []
+
     async def aclose(self) -> None:
         return None
