@@ -123,6 +123,11 @@ class AM4HelpAdapter:
 
         return records
 
+    async def fetch_forecast(self) -> list[PriceRecord]:
+        # AM4Help's public docs don't describe a forecast endpoint at the
+        # moment. Return [] until/unless one is wired up.
+        return []
+
     async def aclose(self) -> None:
         if self._session is not None and not self._session.closed:
             await self._session.close()

@@ -124,6 +124,63 @@ class MGToolsAdapter:
             PriceRecord(commodity="co2", price=co2, ts=ts, source=self.name),
         ]
 
+    async def fetch_forecast(self) -> list[PriceRecord]:
+        """Return upcoming forecasted slots (everything after the '->' marker).
+
+        mgtools' response is a 48-element array, one per half-hour of the
+        day. Since the array is ordered chronologically and exactly one
+        entry is marked as "now", every entry after the marker is exactly
+        ``30 * (k+1)`` minutes in the future. We don't need timezone math:
+        we just compute future timestamps as ``now + 30min * k`` for each
+        post-marker slot.
+        """
+        try:
+            session = await self._get_session()
+            async with session.post(
+                self._url, data=self._body, headers=self._headers
+            ) as resp:
+                resp.raise_for_status()
+                payload = await resp.json(content_type=None)
+        except Exception as exc:
+            log.warning("mgtools forecast fetch failed: %s", exc)
+            return []
+
+        if not isinstance(payload, dict) or payload.get("maintenance"):
+            return []
+        data = payload.get("data")
+        if not isinstance(data, list):
+            return []
+
+        marker_idx: int | None = None
+        for i, entry in enumerate(data):
+            if not isinstance(entry, dict):
+                continue
+            time_str = entry.get("time")
+            if isinstance(time_str, str) and time_str.lstrip().startswith("->"):
+                marker_idx = i
+                break
+        if marker_idx is None:
+            return []
+
+        ts_now = int(time.time())
+        records: list[PriceRecord] = []
+        for k, entry in enumerate(data[marker_idx + 1 :], start=1):
+            if not isinstance(entry, dict):
+                continue
+            try:
+                fuel = float(entry["fuel"])
+                co2 = float(entry["co2"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            ts_future = ts_now + 30 * 60 * k
+            records.append(
+                PriceRecord(commodity="fuel", price=fuel, ts=ts_future, source=self.name)
+            )
+            records.append(
+                PriceRecord(commodity="co2", price=co2, ts=ts_future, source=self.name)
+            )
+        return records
+
     async def aclose(self) -> None:
         if self._session is not None and not self._session.closed:
             await self._session.close()
